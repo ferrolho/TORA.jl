@@ -92,7 +92,7 @@ function solve_with_knitro(problem::Problem, robot::Robot;
     if use_m₂
         knots_con_ee = sort(collect(keys(problem.ee_pos)))
 
-        con_ee = Array{Float64,2}(undef, 3, 0)
+        con_ee = Matrix{Float64}(undef, 3, 0)
 
         for k in knots_con_ee
             con_ee = [con_ee problem.ee_pos[k]]

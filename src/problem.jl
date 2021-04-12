@@ -22,6 +22,9 @@ mutable struct Problem
 
     ee_pos::Dict{Int64,Point{3,Float64}}  # End-effector target positions
 
+    # Dictionaries indexing: knot → body_name → value
+    constraints_body_orientation::Dict{Int64,Dict{String,Rotation}}
+
     # Jacobian data (e.g., for sparse Jacobian of dynamics with AD)
     jacdata_fwd_dyn::JacobianData
     jacdata_inv_dyn::JacobianData
@@ -58,6 +61,7 @@ mutable struct Problem
             Dict{Int64,Vector{Float64}}(),
             Dict{Int64,Vector{Float64}}(),
             Dict{Int64,Point{3,Float64}}(),
+            Dict{Int64,Dict{String,Rotation}}(),
             jacdata_fwd_dyn,
             jacdata_inv_dyn,
             jacdata_ee_position
@@ -122,6 +126,55 @@ function constrain_ee_position!(problem::Problem, knot, position)
 end
 
 """
+    add_constraint_body_orientation!(problem, robot, body_name, knot, rotation; force=false)
+
+Constrain the orientation of a body (kinematic link) of the robot.
+
+See also: [`add_constraint_body_position!`](@ref)
+"""
+function add_constraint_body_orientation!(problem::Problem, robot::Robot, body_name::String, knot::Integer, rotation::Rotation; force=false)
+    @assert body_name ∈ map(x -> x.name, bodies(robot.mechanism))
+    @assert 1 <= knot <= problem.num_knots
+
+    d = problem.constraints_body_orientation
+
+    if !haskey(d, knot)
+        d[knot] = Dict{String,Rotation}()
+    end
+
+    dₖ = d[knot]
+
+    if !haskey(dₖ, body_name) || force
+        dₖ[body_name] = rotation
+    elseif haskey(dₖ, body_name)
+        @warn "
+        You tried to add a constraint for `$(body_name)` at knot=$(knot),
+        but you have already defined a constraint for that knot before.
+        If you wish to overwrite previous constraints, use `force=true`.
+        "
+    end
+
+    return problem
+end
+
+"""
+    body_orientation_constraints_per_knot(problem)
+
+Count number of transcription constraints needed to enforce the
+orientation constraints of the high-level problem definition.
+"""
+function body_orientation_constraints_per_knot(problem::Problem)
+    map(1:problem.num_knots) do knot
+        counter = 0
+        dₖ = get(problem.constraints_body_orientation, knot, Dict())
+        for (body_name, rotation) ∈ dₖ
+            counter += 3  # MRP values
+        end
+        counter
+    end
+end
+
+"""
     show_problem_info(problem)
 
 Output a summary of the problem, including the number of knots with constraints.
@@ -129,11 +182,15 @@ Output a summary of the problem, including the number of knots with constraints.
 function show_problem_info(problem::Problem)
     t = (problem.num_knots - 1) * problem.dt
 
+    println("Discretization ....................................... $(problem.num_knots) knots")
     println("Motion duration ...................................... $(t) seconds")
+    println("Time step length ..................................... $(problem.dt) seconds")
+    println()
     println("Number of knots with constrained joint positions ..... $(length(problem.fixed_q))")
     println("Number of knots with constrained joint velocities .... $(length(problem.fixed_v))")
     println("Number of knots with constrained joint torques ....... $(length(problem.fixed_τ))")
     println("Number of knots with constrained ee position ......... $(length(problem.ee_pos))")
+    println("Number of knots with body orientation constraints .... $(length(problem.constraints_body_orientation))")
 end
 
 """
@@ -153,9 +210,9 @@ function export_trajectory(file::String, problem::Problem, robot::Robot, x)
 
     npzwrite(file, Dict(
         "ts" => ts,
-        "qs" => x[ind_q],
-        "vs" => x[ind_v],
-        "τs" => x[ind_τ],
+        "pos" => x[ind_q],
+        "vel" => x[ind_v],
+        "tau" => x[ind_τ],
     ))
 end
 
